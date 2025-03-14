@@ -4,5 +4,11 @@
         "nombre": "leche alpura clasica 1l ",
         "precio": 30.0,
         "cantidad": 24
+    },
+    {
+        "codigo": "2",
+        "nombre": "donas espolvoreadas bimbo",
+        "precio": 23.0,
+        "cantidad": 20
     }
 ]
