@@ -1,4 +1,16 @@
 [
-    [
-        [
-            
+    {
+        "codigo": "1",
+        "nombre": "leche alpura clasica 1l ",
+        "precio": 30.0,
+        "cantidad": 2,
+        "total": 60.0
+    },
+    {
+        "codigo": "2",
+        "nombre": "donas espolvoreadas bimbo",
+        "precio": 23.0,
+        "cantidad": 3,
+        "total": 69.0
+    }
+]
