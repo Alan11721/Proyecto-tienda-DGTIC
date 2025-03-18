@@ -1,6 +1,7 @@
 import os
 import sqlite3
 from tabulate import tabulate
+from datetime import datetime
 
 # Clase para gestionar la conexión y operaciones con SQLite
 class Database:
@@ -26,10 +27,10 @@ class Database:
         self.cursor.execute('''
             CREATE TABLE IF NOT EXISTS ventas (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                producto_id INTEGER NOT NULL,
+                producto_id TEXT NOT NULL,
                 cantidad INTEGER NOT NULL,
                 total REAL NOT NULL,
-                FOREIGN KEY (producto_id) REFERENCES productos(id)
+                fecha_hora TEXT
             )
         ''')
         self.conexion.commit()
@@ -55,27 +56,20 @@ class Database:
         else:
             print("El inventario está vacío.")
 
-    def actualizar_stock(self, producto_id, cantidad_vendida):
+    def actualizar_stock(self, codigo, cantidad_vendida):
         self.cursor.execute('''
             UPDATE productos 
             SET cantidad = cantidad - ? 
-            WHERE id = ?
-        ''', (cantidad_vendida, producto_id))
+            WHERE codigo = ?
+        ''', (cantidad_vendida, codigo))
         self.conexion.commit()
 
-    def registrar_venta(self, producto_id, cantidad, total):
+    def registrar_venta(self, codigo, cantidad, total):
+        fecha_hora = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         self.cursor.execute('''
-            INSERT INTO ventas (producto_id, cantidad, total) 
-            VALUES (?, ?, ?)
-        ''', (producto_id, cantidad, total))
-        self.conexion.commit()
-
-    def editar_producto(self, producto_id, nuevo_nombre, nuevo_precio, nueva_cantidad):
-        self.cursor.execute('''
-            UPDATE productos 
-            SET nombre = ?, precio = ?, cantidad = ?
-            WHERE id = ?
-        ''', (nuevo_nombre, nuevo_precio, nueva_cantidad, producto_id))
+            INSERT INTO ventas (producto_id, cantidad, total, fecha_hora) 
+            VALUES (?, ?, ?, ?)
+        ''', (codigo, cantidad, total, fecha_hora))
         self.conexion.commit()
 
 # Función para imprimir un título con bordes decorativos
@@ -88,95 +82,113 @@ def imprimir_titulo(titulo):
 # Módulo para realizar el corte de caja
 def corte_de_caja(db):
     imprimir_titulo("CORTE DE CAJA")
-    db.cursor.execute('SELECT total FROM ventas')  # Suma el total de todas las ventas
+    db.cursor.execute('SELECT total, fecha_hora FROM ventas')
     ventas = db.cursor.fetchall()
     total_ventas = sum(v[0] for v in ventas)
+    fecha_inicio = ventas[0][1] if ventas else "No hay ventas registradas"
+    fecha_fin = ventas[-1][1] if ventas else "No hay ventas registradas"
 
-    print(f"Total de ventas registradas: ${total_ventas:.2f}")
-    input("\nPresiona Enter para regresar al menú principal...")
+    print(f"Corte de caja desde: {fecha_inicio}")
+    print(f"Hasta: {fecha_fin}")
+    print(f"Total de ventas: ${total_ventas:.2f}")
 
-# Módulo de ventas modificado para aceptar múltiples productos por venta
+    while True:
+        print("\nOpciones:")
+        print("1. Guardar corte de caja e iniciar uno nuevo")
+        print("2. Salir y continuar usando el corte actual")
+        opcion = input("Seleccione una opción: ").strip()
+
+        if opcion == "1":
+            archivo = f"corte_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+            with open(archivo, 'w') as f:
+                f.write(f"Corte de caja desde: {fecha_inicio}\n")
+                f.write(f"Hasta: {fecha_fin}\n")
+                f.write(f"Total de ventas: ${total_ventas:.2f}\n")
+            print(f"Corte de caja guardado como {archivo}.")
+            db.cursor.execute('DELETE FROM ventas')  # Inicia un nuevo corte de caja borrando las ventas actuales
+            db.conexion.commit()
+            print("Se ha iniciado un nuevo corte de caja.")
+            break
+        elif opcion == "2":
+            print("Continuando con el corte actual...")
+            break
+        else:
+            print("Opción no válida. Intente de nuevo.")
+
+# Módulo de ventas modificado para utilizar código de barras
 def realizar_venta(db):
     imprimir_titulo("REGISTRO DE VENTA")
     productos_vendidos = []
     total_venta = 0
 
     while True:
-        db.mostrar_inventario()
-        opcion = input("Ingrese el ID del producto que desea agregar a la venta, 'finalizar' para terminar, o 'salir' para regresar al menú principal: ").strip()
+        print("\nOpciones:")
+        print("1. Ver Inventario")
+        print("2. Agregar Producto a la Venta")
+        print("3. Finalizar Venta")
+        print("4. Salir al Menú Principal")
 
-        if opcion.lower() == "finalizar":
+        opcion = input("\nSeleccione una opción: ").strip()
+
+        if opcion == "1":
+            db.mostrar_inventario()
+        elif opcion == "2":
+            try:
+                codigo_barras = input("Ingrese el código de barras del producto: ").strip()
+                cantidad = int(input("Cantidad: "))
+                db.cursor.execute('SELECT precio, cantidad FROM productos WHERE codigo = ?', (codigo_barras,))
+                producto = db.cursor.fetchone()
+
+                if producto and producto[1] >= cantidad:
+                    total_producto = producto[0] * cantidad
+                    productos_vendidos.append((codigo_barras, cantidad, total_producto))
+                    total_venta += total_producto
+                    print(f"Producto agregado. Total parcial: ${total_venta:.2f}")
+                else:
+                    print("Stock insuficiente o producto no encontrado.")
+            except ValueError:
+                print("Entrada inválida. Intente de nuevo.")
+        elif opcion == "3":
+            if not productos_vendidos:
+                print("No se ha agregado ningún producto. Por favor, registre al menos un producto antes de finalizar.")
+                continue
+
+            print(f"\nTotal de la venta: ${total_venta:.2f}")
+            while True:
+                try:
+                    recibido = float(input("Monto recibido: "))
+                    if recibido >= total_venta:
+                        cambio = recibido - total_venta
+                        print(f"Cambio: ${cambio:.2f}")
+                        print("Venta realizada con éxito. Gracias por su compra.")
+                        for codigo, cantidad, total_producto in productos_vendidos:
+                            db.registrar_venta(codigo, cantidad, total_producto)
+                            db.actualizar_stock(codigo, cantidad)
+                        break
+                    else:
+                        print("El monto recibido es insuficiente. Intente nuevamente.")
+                except ValueError:
+                    print("Por favor, ingrese una cantidad válida.")
             break
-        elif opcion.lower() == "salir":
+        elif opcion == "4":
             print("Saliendo al menú principal...")
             return
-
-        try:
-            producto_id = int(opcion)
-            cantidad = int(input("Cantidad: "))
-            db.cursor.execute('SELECT precio, cantidad FROM productos WHERE id = ?', (producto_id,))
-            producto = db.cursor.fetchone()
-
-            if producto and producto[1] >= cantidad:
-                total_producto = producto[0] * cantidad
-                productos_vendidos.append((producto_id, cantidad, total_producto))
-                total_venta += total_producto
-                print(f"Producto agregado. Total parcial: ${total_venta:.2f}")
-            else:
-                print("Stock insuficiente o producto no encontrado.")
-        except ValueError:
-            print("Entrada inválida. Intente de nuevo.")
-
-    if productos_vendidos:
-        print(f"\nTotal de la venta: ${total_venta:.2f}")
-        while True:
-            try:
-                recibido = float(input("Monto recibido: "))
-                if recibido >= total_venta:
-                    cambio = recibido - total_venta
-                    print(f"Cambio: ${cambio:.2f}")
-                    print("Venta realizada con éxito. Gracias por su compra.")
-                    for producto_id, cantidad, total_producto in productos_vendidos:
-                        db.registrar_venta(producto_id, cantidad, total_producto)
-                        db.actualizar_stock(producto_id, cantidad)
-                    break
-                else:
-                    print("El monto recibido es insuficiente. Intente nuevamente.")
-            except ValueError:
-                print("Por favor, ingrese una cantidad válida.")
-    else:
-        print("No se realizó ninguna venta.")
-
-# Módulo para editar productos en el inventario
-def editar_inventario(db):
-    imprimir_titulo("EDITAR INVENTARIO")
-    db.mostrar_inventario()
-
-    try:
-        producto_id = int(input("Ingrese el ID del producto que desea modificar: "))
-        db.cursor.execute('SELECT * FROM productos WHERE id = ?', (producto_id,))
-        producto = db.cursor.fetchone()
-
-        if producto:
-            print(f"\nProducto seleccionado: {producto[2]} (Código: {producto[1]}, Precio: ${producto[3]:.2f}, Existencias: {producto[4]})")
-            nuevo_nombre = input("Nuevo nombre (presiona Enter para no modificar): ").strip()
-            nuevo_precio = input("Nuevo precio (presiona Enter para no modificar): ").strip()
-            nueva_cantidad = input("Nueva cantidad (presiona Enter para no modificar): ").strip()
-
-            nuevo_nombre = nuevo_nombre if nuevo_nombre else producto[2]
-            nuevo_precio = float(nuevo_precio) if nuevo_precio else producto[3]
-            nueva_cantidad = int(nueva_cantidad) if nueva_cantidad else producto[4]
-
-            db.editar_producto(producto_id, nuevo_nombre, nuevo_precio, nueva_cantidad)
-            print("Producto actualizado exitosamente.")
         else:
-            print("Producto no encontrado.")
-    except ValueError:
-        print("Entrada inválida. Intente de nuevo.")
+            print("Opción no válida. Intente nuevamente.")
 
-# Menú principal modificado para incluir la opción de corte de caja
+# Función para agregar columna fecha_hora si no existe
+def agregar_columna_fecha_hora(db):
+    try:
+        db.cursor.execute("ALTER TABLE ventas ADD COLUMN fecha_hora TEXT")
+        db.conexion.commit()
+        print("Columna 'fecha_hora' agregada correctamente a la tabla 'ventas'.")
+    except sqlite3.OperationalError:
+        print("La columna 'fecha_hora' ya existe en la tabla 'ventas'.")
+
+# Menú principal
 def menu_principal():
     db = Database('datos/tienda.db')
+    agregar_columna_fecha_hora(db)  # Agregar columna 'fecha_hora' si no existe
 
     while True:
         imprimir_titulo("MENÚ PRINCIPAL")
@@ -203,7 +215,7 @@ def menu_principal():
         elif opcion == '3':
             realizar_venta(db)
         elif opcion == '4':
-            editar_inventario(db)
+            print("Editar inventario: En construcción")
         elif opcion == '5':
             corte_de_caja(db)
         elif opcion == '6':
@@ -218,4 +230,3 @@ if __name__ == "__main__":
     if not os.path.exists('datos'):
         os.makedirs('datos')  # Crea la carpeta "datos" si no existe
     menu_principal()  # Llama al menú principal para iniciar el programa
-
