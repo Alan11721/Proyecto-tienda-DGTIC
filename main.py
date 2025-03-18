@@ -4,7 +4,9 @@ import sqlite3
 # Clase para gestionar la conexión y operaciones con SQLite
 class Database:
     def __init__(self, db_path):
+        print(f"Intentando conectar a la base de datos en {db_path}")
         self.conexion = sqlite3.connect(db_path)
+        print("Conexión exitosa.")
         self.cursor = self.conexion.cursor()
         self.crear_tablas()
 
