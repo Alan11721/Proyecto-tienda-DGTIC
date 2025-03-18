@@ -1,108 +1,130 @@
 import os
-from productos import Producto
-from inventario import Inventario
-from ventas import Venta
+import sqlite3
 
-# Crea un directorio llamado 'datos' si no existe
-def crear_directorios():
-    os.makedirs('datos', exist_ok=True)
+# Clase para gestionar la conexión y operaciones con SQLite
+class Database:
+    def __init__(self, db_path):
+        self.conexion = sqlite3.connect(db_path)
+        self.cursor = self.conexion.cursor()
+        self.crear_tablas()
 
-# Imprime un título con bordes decorativos
+    def crear_tablas(self):
+        # Tabla para productos
+        self.cursor.execute('''
+            CREATE TABLE IF NOT EXISTS productos (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                codigo TEXT UNIQUE NOT NULL,
+                nombre TEXT NOT NULL,
+                precio REAL NOT NULL,
+                cantidad INTEGER NOT NULL
+            )
+        ''')
+        # Tabla para ventas
+        self.cursor.execute('''
+            CREATE TABLE IF NOT EXISTS ventas (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                producto_id INTEGER NOT NULL,
+                cantidad INTEGER NOT NULL,
+                total REAL NOT NULL,
+                FOREIGN KEY (producto_id) REFERENCES productos(id)
+            )
+        ''')
+        self.conexion.commit()
+
+    def insertar_producto(self, codigo, nombre, precio, cantidad):
+        try:
+            self.cursor.execute('''
+                INSERT INTO productos (codigo, nombre, precio, cantidad) 
+                VALUES (?, ?, ?, ?)
+            ''', (codigo, nombre, precio, cantidad))
+            self.conexion.commit()
+            print("Producto agregado exitosamente.")
+        except sqlite3.IntegrityError:
+            print("El código del producto ya existe. Intente con otro.")
+
+    def mostrar_inventario(self):
+        self.cursor.execute('SELECT * FROM productos')
+        productos = self.cursor.fetchall()
+        if productos:
+            for p in productos:
+                print(f"ID: {p[0]}, Código: {p[1]}, Nombre: {p[2]}, Precio: ${p[3]:.2f}, Cantidad: {p[4]}")
+        else:
+            print("El inventario está vacío.")
+
+    def actualizar_stock(self, producto_id, cantidad_vendida):
+        self.cursor.execute('''
+            UPDATE productos 
+            SET cantidad = cantidad - ? 
+            WHERE id = ?
+        ''', (cantidad_vendida, producto_id))
+        self.conexion.commit()
+
+    def registrar_venta(self, producto_id, cantidad, total):
+        self.cursor.execute('''
+            INSERT INTO ventas (producto_id, cantidad, total) 
+            VALUES (?, ?, ?)
+        ''', (producto_id, cantidad, total))
+        self.conexion.commit()
+
+# Funciones auxiliares
 def imprimir_titulo(titulo):
     borde = "=" * (len(titulo) + 4)
     print("\n" + borde)
     print(f"| {titulo} |")
     print(borde + "\n")
 
-# Proceso de venta continuo
-def proceso_venta(venta, inventario):
-    while True:  # Ciclo para iniciar nuevas ventas automáticamente
-        productos_agregados = []  # Lista para almacenar los productos agregados en esta venta
-        while True:
-            imprimir_titulo("REGISTRO DE VENTA")
-            print("Ingrese el código del producto (o escriba 'finalizar' para terminar la venta):")
-            codigo = input("Código: ").strip()
+def realizar_venta(db):
+    imprimir_titulo("REGISTRO DE VENTA")
+    db.mostrar_inventario()
 
-            if codigo.lower() == 'finalizar':  # Finaliza el proceso de venta
-                if not productos_agregados:
-                    print("No se han registrado productos. Venta cancelada.")
-                    break
-                imprimir_titulo("RESUMEN DE VENTA")
-                total = sum(p['total'] for p in productos_agregados)
-                for p in productos_agregados:
-                    print(f"{p['nombre']} x{p['cantidad']} - ${p['total']:.2f}")
-                print(f"\nTOTAL: ${total:.2f}")
+    try:
+        producto_id = int(input("Ingrese el ID del producto: "))
+        cantidad = int(input("Cantidad: "))
+        db.cursor.execute('SELECT precio, cantidad FROM productos WHERE id = ?', (producto_id,))
+        producto = db.cursor.fetchone()
 
-                # Calculadora para cambio
-                while True:
-                    try:
-                        recibido = float(input("Ingrese cantidad recibida: "))
-                        if recibido >= total:
-                            cambio = recibido - total
-                            print(f"Cambio: ${cambio:.2f}")
-                            print("Venta finalizada. ¡Gracias!")
-                            venta.finalizar_venta()
-                            break  # Termina la calculadora
-                        else:
-                            print("La cantidad recibida es insuficiente. Intente de nuevo.")
-                    except ValueError:
-                        print("Por favor, ingrese una cantidad válida.")
-                break  # Comienza otra venta
-            else:
-                try:
-                    cantidad = int(input("Cantidad: "))
-                    producto = next((p for p in inventario.productos if p.codigo == codigo), None)
-                    if producto:
-                        venta.agregar_producto(producto, cantidad)
-                        productos_agregados.append({
-                            'nombre': producto.nombre,
-                            'cantidad': cantidad,
-                            'total': producto.precio * cantidad
-                        })
-                        print(f"Producto agregado: {producto.nombre} x{cantidad}")
-                    else:
-                        print("Producto no encontrado. Intente nuevamente.")
-                except ValueError:
-                    print("Por favor, ingrese una cantidad válida.")
+        if producto and producto[1] >= cantidad:  # Verifica stock disponible
+            total = producto[0] * cantidad
+            db.registrar_venta(producto_id, cantidad, total)
+            db.actualizar_stock(producto_id, cantidad)
+            print(f"Venta realizada con éxito. Total: ${total:.2f}")
+        else:
+            print("Stock insuficiente o producto no encontrado.")
+    except ValueError:
+        print("Entrada inválida. Intente de nuevo.")
 
-# Menú principal
-def menu():
-    imprimir_titulo("MENÚ PRINCIPAL")
-    print("1. Mostrar Inventario")
-    print("2. Agregar Producto al Inventario")
-    print("3. Realizar Venta")
-    print("4. Salir")
-    print("=" * 20)
-
-def main():
-    crear_directorios()
-    inventario = Inventario('datos/inventario.json')
-    venta = Venta('datos/ventas.json')
+def menu_principal():
+    db = Database('datos/tienda.db')
 
     while True:
-        menu()
-        opcion = input("Seleccione una opción: ")
+        imprimir_titulo("MENÚ PRINCIPAL")
+        print("1. Mostrar Inventario")
+        print("2. Agregar Producto al Inventario")
+        print("3. Realizar Venta")
+        print("4. Salir")
+        print("=" * 20)
 
+        opcion = input("Seleccione una opción: ").strip()
         if opcion == '1':
             imprimir_titulo("INVENTARIO")
-            inventario.mostrar_inventario()
+            db.mostrar_inventario()
         elif opcion == '2':
             imprimir_titulo("AGREGAR PRODUCTO")
             codigo = input("Código: ")
             nombre = input("Nombre: ")
             precio = float(input("Precio: "))
             cantidad = int(input("Cantidad: "))
-            producto = Producto(codigo, nombre, precio, cantidad)
-            inventario.agregar_producto(producto)
-            print("Producto agregado exitosamente.")
+            db.insertar_producto(codigo, nombre, precio, cantidad)
         elif opcion == '3':
-            proceso_venta(venta, inventario)
+            realizar_venta(db)
         elif opcion == '4':
             imprimir_titulo("SALIDA")
-            print("Gracias por usar el punto de venta. ¡Hasta luego!")
+            print("Gracias por usar el sistema. ¡Hasta luego!")
             break
         else:
-            print("Opción no válida")
+            print("Opción no válida. Intente de nuevo.")
 
 if __name__ == "__main__":
-    main()
+    if not os.path.exists('datos'):
+        os.makedirs('datos')
+    menu_principal()
